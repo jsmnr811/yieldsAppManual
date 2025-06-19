@@ -2,12 +2,14 @@
 
 namespace App\Livewire;
 
-use App\Models\OverallImpression;
-use App\Models\Recommendation;
 use Livewire\Component;
+use App\Models\Recommendation;
 use App\Models\UserInformation;
+use App\Models\OverallImpression;
+use App\Services\GoogleSheetServices;
 use App\Models\SpecificSectionFeedback;
-use Jantinnerezo\LivewireAlert\LivewireAlert;
+use Illuminate\Validation\ValidationException;
+use Jantinnerezo\LivewireAlert\Facades\LivewireAlert;
 
 class FeedbackForm extends Component
 {
@@ -224,7 +226,7 @@ class FeedbackForm extends Component
         $baseRules = [
             'name' => 'required|string|max:255',
             'organization' => 'required|string|max:255',
-            'other_organization' => 'required_if:organization,Other|string|max:255',
+            'other_organization' => 'required_if:organization,Other',
             'position' => 'required|string|max:255',
             'overall_impression' => 'required|string|max:255',
             'expectation_met' => 'required|string|max:255',
@@ -245,47 +247,77 @@ class FeedbackForm extends Component
     }
 
 
-    public function submit()
+    public function submitFeedback()
     {
-        $this->validate($this->rules());
-
-        // Save UserInformation and get its id
-        $userInfo = UserInformation::create([
-            'name' => $this->name,
-            'organization' => $this->organization === 'Other' ? $this->other_organization : $this->organization,
-            'position' => $this->position,
-        ]);
-
-
-        // Save Overall Impression
-        OverallImpression::create([
-            'user_information_id' => $userInfo->id,
-            'overall_impression' => $this->overall_impression,
-            'expectation_met' => $this->expectation_met,
-        ]);
-
-        // Save Specific Section Feedbacks - loop through all feedbacks
-        foreach ($this->feedbacks as $section) {
-            SpecificSectionFeedback::create([
-                'user_information_id' => $userInfo->id,
-                'section_title' => $section['section_title'],
-                'rating' => $section['rating'] ?? '',
-                'difficulty' => $section['difficulty'] ?? '',
-                'data_compliance' => $section['data_compliance'] ?? '',
-                'comments' => $section['comments'] ?? '',
+        try {
+            $this->validate();
+            $userInfo = UserInformation::create([
+                'name' => $this->name,
+                'organization' => $this->organization === 'Other' ? $this->other_organization : $this->organization,
+                'position' => $this->position,
             ]);
+
+            // Save Overall Impression
+            OverallImpression::create([
+                'user_information_id' => $userInfo->id,
+                'overall_impression' => $this->overall_impression,
+                'expectation_met' => $this->expectation_met,
+            ]);
+
+            // Save Specific Section Feedbacks - loop through all feedbacks
+            foreach ($this->feedbacks as $section) {
+                SpecificSectionFeedback::create([
+                    'user_information_id' => $userInfo->id,
+                    'section_title' => $section['section_title'],
+                    'rating' => $section['rating'] ?? '',
+                    'difficulty' => $section['difficulty'] ?? '',
+                    'data_compliance' => $section['data_compliance'] ?? '',
+                    'comments' => $section['comments'] ?? '',
+                ]);
+            }
+            // Save Recommendations
+            Recommendation::create([
+                'user_information_id' => $userInfo->id,
+                'improvements' => $this->improvements,
+                'topics_to_expand' => $this->topics_to_expand,
+                'additional_comments' => $this->additional_comments,
+            ]);
+            $this->appendToSheet();
+            LivewireAlert::title('Thanks!')
+                ->text('Your feedback has been submitted successfully!')
+                ->success()
+                ->show();
+            $this->reset();
+        } catch (ValidationException $e) {
+            LivewireAlert::title('Error')
+                ->text('Please fill in all the required fields correctly.')
+                ->error()
+                ->show();
+
         }
+    }
 
-        // Save Recommendations
-        Recommendation::create([
-            'user_information_id' => $userInfo->id,
-            'improvements' => $this->improvements,
-            'topics_to_expand' => $this->topics_to_expand,
-            'additional_comments' => $this->additional_comments,
-        ]);
+    public function appendToSheet()
+    {
+        $dataForExcel = [
+            $this->name,
+            $this->organization === 'Other' ? $this->other_organization : $this->organization,
+            $this->position,
+            $this->overall_impression,
+            $this->expectation_met,
+        ];
+        foreach ($this->feedbacks  as $section) {
+            $dataForExcel[] = $section['rating'] ?? '';
+            $dataForExcel[] =   $section['difficulty'] ?? '';
+            $dataForExcel[] =  $section['data_compliance'] ?? '';
+            $dataForExcel[] =  $section['comments'] ?? '';
+        }
+        $dataForExcel[] = $this->improvements ?? '';
+        $dataForExcel[] = $this->topics_to_expand ?? '';
+        $dataForExcel[] = $this->additional_comments ?? '';
 
-
-        $this->reset();  // Clear the form
+        $service = new GoogleSheetServices();
+        $service->handle($dataForExcel);
     }
 
 
