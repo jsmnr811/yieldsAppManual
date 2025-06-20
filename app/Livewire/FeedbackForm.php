@@ -13,6 +13,7 @@ use Jantinnerezo\LivewireAlert\Facades\LivewireAlert;
 
 class FeedbackForm extends Component
 {
+
     public $name;
     public $organization;
     public $other_organization;
@@ -224,47 +225,58 @@ class FeedbackForm extends Component
     protected function rules()
     {
         $baseRules = [
-            'name' => 'required|string|max:255',
-            'organization' => 'required|string|max:255',
-            'other_organization' => 'required_if:organization,Other',
-            'position' => 'required|string|max:255',
-            'overall_impression' => 'required|string|max:255',
-            'expectation_met' => 'required|string|max:255',
-            'improvements' => 'nullable|string|max:255',
-            'topics_to_expand' => 'nullable|string|max:255',
-            'additional_comments' => 'nullable|string|max:255',
+            'name' => ['required', 'string', 'max:255'],
+            'organization' => ['required', 'string', 'max:255'],
+            'other_organization' => ['required_if:organization,Other', 'string', 'max:255'],
+            'position' => ['required', 'string', 'max:255'],
+            'overall_impression' => ['required', 'string', 'max:255'],
+            'expectation_met' => ['required', 'string', 'max:255'],
+            'improvements' => ['nullable', 'string', 'max:255'],
+            'topics_to_expand' => ['nullable', 'string', 'max:255'],
+            'additional_comments' => ['nullable', 'string', 'max:255'],
         ];
 
         $feedbackRules = [];
         foreach ($this->feedbacks as $key => $feedback) {
-            $feedbackRules["feedbacks.$key.rating"] = 'required|integer|min:1|max:5';
-            $feedbackRules["feedbacks.$key.difficulty"] = 'required|integer|min:1|max:5';
-            $feedbackRules["feedbacks.$key.data_compliance"] = 'required|integer|min:1|max:5';
-            $feedbackRules["feedbacks.$key.comments"] = 'nullable|string|max:255';
+            $feedbackRules["feedbacks.$key.rating"] = ['required', 'integer', 'min:1', 'max:5'];
+            $feedbackRules["feedbacks.$key.difficulty"] = ['required', 'integer', 'min:1', 'max:5'];
+            $feedbackRules["feedbacks.$key.data_compliance"] = ['required', 'integer', 'min:1', 'max:5'];
+            $feedbackRules["feedbacks.$key.comments"] = ['nullable', 'string', 'max:255'];
         }
 
         return array_merge($baseRules, $feedbackRules);
     }
 
 
-    public function submitFeedback()
+    public function confirmSave()
+    {
+        LivewireAlert::title('Are you sure?')
+            ->text('Submit this feedback?')
+            ->question()
+            ->timer(0)
+            ->withConfirmButton('Submit')
+            ->withCancelButton('Cancel')
+            ->onConfirm('submit')
+            ->show();
+    }
+
+    public function submit()
     {
         try {
-            $this->validate();
+            $this->validate($this->rules());
+
             $userInfo = UserInformation::create([
                 'name' => $this->name,
                 'organization' => $this->organization === 'Other' ? $this->other_organization : $this->organization,
                 'position' => $this->position,
             ]);
 
-            // Save Overall Impression
             OverallImpression::create([
                 'user_information_id' => $userInfo->id,
                 'overall_impression' => $this->overall_impression,
                 'expectation_met' => $this->expectation_met,
             ]);
 
-            // Save Specific Section Feedbacks - loop through all feedbacks
             foreach ($this->feedbacks as $section) {
                 SpecificSectionFeedback::create([
                     'user_information_id' => $userInfo->id,
@@ -275,29 +287,43 @@ class FeedbackForm extends Component
                     'comments' => $section['comments'] ?? '',
                 ]);
             }
-            // Save Recommendations
+
             Recommendation::create([
                 'user_information_id' => $userInfo->id,
                 'improvements' => $this->improvements,
                 'topics_to_expand' => $this->topics_to_expand,
                 'additional_comments' => $this->additional_comments,
             ]);
-            $this->appendToSheet();
-            LivewireAlert::title('Thanks!')
-                ->text('Your feedback has been submitted successfully!')
-                ->success()
-                ->show();
-            $this->reset();
-        } catch (ValidationException $e) {
-            LivewireAlert::title('Error')
-                ->text('Please fill in all the required fields correctly.')
-                ->error()
-                ->show();
 
+            $this->appendToSheet();
+
+            $this->reset();
+
+            LivewireAlert::title('Success!')
+                ->text('You have successfully submitted the feedback.')
+                ->success()
+                ->toast()
+                ->position('top-end')
+                ->show();
+        } catch (ValidationException $e) {
+            $errors = $e->validator->errors();
+
+            // Set the errors into Livewire's error bag to highlight all fields and show messages
+            $this->setErrorBag($errors->messages());
+
+            // Get the first error message to show in the alert
+            $firstError = collect($errors->messages())->flatten()->first();
+
+            LivewireAlert::title('Validation Failed')
+                ->text($firstError)
+                ->error()
+                ->toast()
+                ->position('top-end')
+                ->show();
         }
     }
 
-    public function appendToSheet()
+    private function appendToSheet()
     {
         $dataForExcel = [
             $this->name,
@@ -315,6 +341,7 @@ class FeedbackForm extends Component
         $dataForExcel[] = $this->improvements ?? '';
         $dataForExcel[] = $this->topics_to_expand ?? '';
         $dataForExcel[] = $this->additional_comments ?? '';
+        $dataForExcel[] = date('Y-m-d H:i:s A');
 
         $service = new GoogleSheetServices();
         $service->handle($dataForExcel);
