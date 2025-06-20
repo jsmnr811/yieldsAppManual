@@ -14,4 +14,19 @@ class UserInformation extends Model
         'organization',
         'position',
     ];
+
+    public function overallImpression()
+    {
+        return $this->hasOne(OverallImpression::class);
+    }
+
+    public function specificSectionFeedbacks()
+    {
+        return $this->hasMany(SpecificSectionFeedback::class);
+    }
+
+    public function recommendation()
+    {
+        return $this->hasOne(Recommendation::class);
+    }
 }
